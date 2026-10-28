@@ -1,13 +1,13 @@
-# CPH2185 kernel - private workspace
+# CPH2185 kernel - Azizur Rahman
 
 **Author:** Azizur Rahman  
 **GitHub:** [azixur-rahman](https://github.com/azixur-rahman)
 
-This is the private CPH2185 (OPPO A15 / MT6765) kernel workspace.
+Public CPH2185 (OPPO A15 / MT6765) kernel workspace.
 
-The public fork was removed because GitHub does not allow a public fork to be
-made private directly. The full source archive and the touch-fix files are in
-the release attached to this repository.
+The full source archive and the touch-fix files are attached to the
+`private-source-backup` release. The tag name is historical; the repository
+and its releases are public.
 
 ## Contents
 
