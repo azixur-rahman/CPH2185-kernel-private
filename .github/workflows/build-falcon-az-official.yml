@@ -51,11 +51,22 @@ jobs:
           grep -q 'kernelsu' drivers/Makefile
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig
 
+      - name: Fix touch driver for stock CPH2185 DTBO
+        working-directory: kernel
+        run: |
+          sed -i '\|source "drivers/input/touchscreen/oppo_touchscreen/Kconfig"|d' drivers/input/touchscreen/Kconfig
+          ! grep -q 'oppo_touchscreen/Kconfig' drivers/input/touchscreen/Kconfig
+          patch -p1 < ../packaging/falcon-az-touch-fix.patch
+          grep -q 'SWRST_N8_ADDR = 0x03F0FE' drivers/input/touchscreen/mediatek/NT36525B/nt36xxx.c
+          grep -q 'reset_global_gpio not available' drivers/input/touchscreen/mediatek/NT36525B/nt36xxx.c
+
       - name: Add KSU config and Falcon-AZ display name
         working-directory: kernel
         run: |
           cp ../packaging/stock.config arch/arm64/configs/falcon_stock_defconfig
           sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="+"/' arch/arm64/configs/falcon_stock_defconfig
+          sed -i 's/^CONFIG_TOUCHPANEL_OPPO=y/# CONFIG_TOUCHPANEL_OPPO is not set/' arch/arm64/configs/falcon_stock_defconfig
+          sed -i 's/^# CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI is not set/CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI=y/' arch/arm64/configs/falcon_stock_defconfig
           cat >> arch/arm64/configs/falcon_stock_defconfig <<'EOF'
 
           # Falcon-AZ: KernelSU + SUSFS
@@ -75,6 +86,7 @@ jobs:
           grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/falcon_stock_defconfig
           grep -q '^CONFIG_MODVERSIONS=y$' arch/arm64/configs/falcon_stock_defconfig
           grep -q '^CONFIG_LOCALVERSION="+"$' arch/arm64/configs/falcon_stock_defconfig
+          grep -q '^CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI=y$' arch/arm64/configs/falcon_stock_defconfig
           ! grep -q '^CONFIG_WLAN_DRV_BUILD_IN=y' arch/arm64/configs/falcon_stock_defconfig
           python3 - <<'PY'
           from pathlib import Path
