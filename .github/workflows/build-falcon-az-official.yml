@@ -60,6 +60,13 @@ jobs:
           grep -q 'SWRST_N8_ADDR = 0x03F0FE' drivers/input/touchscreen/mediatek/NT36525B/nt36xxx.c
           grep -q 'reset_global_gpio not available' drivers/input/touchscreen/mediatek/NT36525B/nt36xxx.c
 
+      - name: Strip dangling Kconfig source lines
+        working-directory: kernel
+        run: |
+          python3 ../packaging/strip-missing-kconfig-sources.py .
+          ! grep -q 'oppo_touchscreen/Kconfig' drivers/input/touchscreen/Kconfig
+          ! grep -q 'oppo_phoenix/Kconfig' drivers/soc/oppo/Kconfig
+
       - name: Add KSU config and Falcon-AZ display name
         working-directory: kernel
         run: |
