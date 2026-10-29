@@ -43,6 +43,7 @@ cat /proc/modules 2>/dev/null
 echo
 
 echo "===== stock module files and vermagic ====="
+mkdir -p /sdcard/Falcon-AZ-stock-modules 2>/dev/null
 for f in /vendor/lib/modules/*.ko /system/lib/modules/*.ko /odm/lib/modules/*.ko; do
   [ -f "$f" ] || continue
   echo "--- $f"
@@ -56,6 +57,11 @@ for f in /vendor/lib/modules/*.ko /system/lib/modules/*.ko /odm/lib/modules/*.ko
     modinfo "$f" 2>/dev/null | grep -E '^(filename|vermagic|version|name):'
   fi
 done
+for n in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko wlan_drv_gen4m_6765.ko; do
+  f=/vendor/lib/modules/$n
+  [ -f "$f" ] && cp -f "$f" /sdcard/Falcon-AZ-stock-modules/ 2>/dev/null
+done
+ls -lh /sdcard/Falcon-AZ-stock-modules 2>/dev/null
 echo
 
 echo "===== module load errors in dmesg ====="
