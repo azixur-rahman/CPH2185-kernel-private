@@ -78,6 +78,47 @@ jobs:
           ! grep -q 'oppo_touchscreen/Kconfig' drivers/input/touchscreen/Kconfig
           ! grep -q 'oppo_phoenix/Kconfig' drivers/soc/oppo/Kconfig
 
+      - name: Add OPPO phoenix stub header
+        run: |
+          mkdir -p vendor/oppo/oppo_phoenix/kernel/oppo_phoenix
+          cat > vendor/oppo/oppo_phoenix/kernel/oppo_phoenix/oppo_phoenix.h <<'EOF'
+          #ifndef _OPPO_PHOENIX_STUB_H
+          #define _OPPO_PHOENIX_STUB_H
+
+          #include <soc/oppo/phoenix_base.h>
+
+          /*
+           * The real phoenix driver lives in OPPO's unpublished vendor tree.
+           * These no-op callbacks keep the boot-stage hooks in init/main.c,
+           * kernel/panic.c and mrdump_panic_wdt.c building and harmless.
+           */
+
+          static inline void phx_stub_set_boot_stage(const char *stage)
+          {
+                  (void)stage;
+          }
+
+          static inline int phx_stub_is_boot_completed(void)
+          {
+                  return 1;
+          }
+
+          static inline void phx_stub_set_boot_error(const char *error)
+          {
+                  (void)error;
+          }
+
+          static void (*phx_set_boot_stage)(const char *) __attribute__((unused)) =
+                  phx_stub_set_boot_stage;
+          static int (*phx_is_phoenix_boot_completed)(void) __attribute__((unused)) =
+                  phx_stub_is_boot_completed;
+          static void (*phx_set_boot_error)(const char *) __attribute__((unused)) =
+                  phx_stub_set_boot_error;
+
+          #endif
+          EOF
+          test -s vendor/oppo/oppo_phoenix/kernel/oppo_phoenix/oppo_phoenix.h
+
       - name: Add KSU config and Falcon-AZ display name
         working-directory: kernel
         run: |
