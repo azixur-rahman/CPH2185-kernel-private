@@ -54,9 +54,12 @@ jobs:
           # Stock CPH2185 keeps the MediaTek WMT/WLAN stack built into the
           # kernel. Keep that path enabled so /dev/wmtdetect exists before
           # ueventd coldboot and gets the correct SELinux label.
-          grep -q 'obj-y += common/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q 'obj-y += wlan/adaptor/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q 'obj-y += wlan/core/gen4m/' drivers/misc/mediatek/connectivity/Makefile
+          grep -qF 'obj-$(CONFIG_MTK_COMBO) += common/' drivers/misc/mediatek/connectivity/Makefile
+          grep -qF 'obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/adaptor/' drivers/misc/mediatek/connectivity/Makefile
+          grep -qF 'obj-$(CONFIG_MTK_COMBO_CHIP_CONSYS_6765) += wlan/core/gen4m/' drivers/misc/mediatek/connectivity/Makefile
+          grep -qF 'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/' drivers/misc/mediatek/connectivity/Makefile
+          grep -qF 'obj-$(CONFIG_MTK_COMBO_GPS) += gps/' drivers/misc/mediatek/connectivity/Makefile
+          grep -qF 'obj-$(CONFIG_MTK_FMRADIO) += fmradio/' drivers/misc/mediatek/connectivity/Makefile
           grep -q 'MTK_WCN_BUILT_IN_DRIVER' drivers/misc/mediatek/connectivity/Makefile
 
           # Block the vendor copies of the same connectivity modules. Their
@@ -68,12 +71,12 @@ jobs:
           s = p.read_text()
           old = 'static char *module_blacklist;\n'
           new = ('/* Vendor MediaTek connectivity modules are built into this kernel. */\n'
-                 'static char *module_blacklist = "wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv";\n')
+                 'static char *module_blacklist = "wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv,fmradio_drv";\n')
           if s.count(old) != 1:
               raise SystemExit('module_blacklist declaration not found exactly once')
           p.write_text(s.replace(old, new, 1))
           PY
-          grep -q 'module_blacklist = "wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv"' kernel/module.c
+          grep -q 'module_blacklist = "wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv,fmradio_drv"' kernel/module.c
 
           # Stock modules require vermagic 4.9.190+ exactly.
           sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="+"/' arch/arm64/configs/CPH2185_defconfig
@@ -143,10 +146,10 @@ jobs:
           grep -q 'mtk_wcn_common_drv_init' ../Falcon-AZ-System.map
           grep -aq 'wmtdetect' out/vmlinux
           grep -aq 'wmtWifi' out/vmlinux
-          grep -aq 'wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv' out/kernel/module.o
+          grep -aq 'wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv,fmradio_drv' out/kernel/module.o
 
           echo '== vendor module block check =='
-          grep -q 'module_blacklist = "wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv"' kernel/module.c
+          grep -q 'module_blacklist = "wmt_drv,wmt_chrdev_wifi,wlan_drv_gen4m,bt_drv,gps_drv,fmradio_drv"' kernel/module.c
 
           test -s out/drivers/misc/mediatek/connectivity/connadp.o
           test -s out/drivers/misc/mediatek/connectivity/common/wmt_drv.o
