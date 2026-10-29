@@ -29,6 +29,7 @@ jobs:
             libncurses5-dev \
             libssl-dev \
             python3 \
+            python2 \
             unzip \
             zip
 
@@ -42,6 +43,16 @@ jobs:
           test -f src/kernel-4.9/arch/arm64/configs/oppo6765_defconfig
           mv src/kernel-4.9 kernel
           head -5 kernel/Makefile
+
+      - name: Apply build compatibility fixes
+        working-directory: kernel
+        run: |
+          # DrvGen.py is a Python 2 script used while generating DTB cust.dtsi
+          sed -i '1s|^#!.*|#!/usr/bin/env python2|' tools/dct/DrvGen.py
+          grep -q 'python2' tools/dct/DrvGen.py
+          # Old dtc trips over -fno-common with modern GCC
+          sed -i 's/^HOSTCFLAGS   := -Wall/HOSTCFLAGS   := -fcommon -Wall/' Makefile
+          grep -q '^HOSTCFLAGS   := -fcommon -Wall' Makefile
 
       - name: Setup KernelSU BakaSU and SUSFS
         working-directory: kernel
