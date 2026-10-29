@@ -103,16 +103,35 @@ jobs:
         working-directory: src
         run: |
           set -e
+          echo '== config checks =='
           grep -q '^CONFIG_LOCALVERSION="+"' ../Falcon-AZ-config
-          grep -q '^CONFIG_LOCALVERSION_AUTO=n' ../Falcon-AZ-config
+          grep -qE '^(CONFIG_LOCALVERSION_AUTO=n|# CONFIG_LOCALVERSION_AUTO is not set)$' ../Falcon-AZ-config
           grep -q '^CONFIG_KSU=y' ../Falcon-AZ-config
           grep -q '^CONFIG_KSU_SUSFS=y' ../Falcon-AZ-config
           grep -q '^CONFIG_MODVERSIONS=y' ../Falcon-AZ-config
+
+          echo '== kernel release checks =='
+          test "$(cat out/include/config/kernel.release)" = "4.9.190+"
           grep -q '#define UTS_RELEASE "4.9.190+"' out/include/generated/utsrelease.h
+
+          echo '== display and vermagic checks =='
           grep -aq '4.9.190-falcon-az' out/vmlinux
+          grep -aq '4.9.190-falcon-az' out/arch/arm64/boot/Image
+          grep -aq '4.9.190+ SMP preempt mod_unload modversions aarch64' out/kernel/module.o
           grep -aq '4.9.190+ SMP preempt mod_unload modversions aarch64' out/vmlinux
+          grep -aq '4.9.190+ SMP preempt mod_unload modversions aarch64' out/arch/arm64/boot/Image
+
+          echo '== built-in WMT removal checks =='
+          if grep -q 'wmt_ctrl_ul_cmd' ../Falcon-AZ-System.map; then
+            echo 'ERROR: built-in WMT symbol found in System.map'
+            exit 1
+          fi
           if grep -aq 'wmt_ctrl_ul_cmd' out/vmlinux; then
-            echo 'ERROR: built-in WMT is still in vmlinux'
+            echo 'ERROR: built-in WMT string found in vmlinux'
+            exit 1
+          fi
+          if grep -aq 'wmt_ctrl_ul_cmd' out/arch/arm64/boot/Image; then
+            echo 'ERROR: built-in WMT string found in Image'
             exit 1
           fi
           test -s out/drivers/misc/mediatek/connectivity/connadp.o
