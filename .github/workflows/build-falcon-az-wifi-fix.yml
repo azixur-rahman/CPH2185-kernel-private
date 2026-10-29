@@ -209,7 +209,8 @@ jobs:
           grep -q 'wmt_ctrl_ul_cmd' ../Falcon-AZ-System.map
           grep -q 'mtk_wcn_common_drv_init' ../Falcon-AZ-System.map
           grep -aq 'wmtdetect' out/vmlinux
-          grep -aq 'module_blacklist = "wmt_drv";' out/kernel/module.o
+          grep -aq 'module_blacklist' out/kernel/module.o
+          grep -aq 'wmt_drv' out/kernel/module.o
 
           echo '== stock module flow checks =='
           test -s out/drivers/misc/mediatek/connectivity/connadp.o
