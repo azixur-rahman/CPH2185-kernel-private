@@ -102,7 +102,7 @@ jobs:
       - name: Verify Falcon-AZ WiFi build
         working-directory: src
         run: |
-          set -e
+          set -ex
           echo '== config checks =='
           grep -q '^CONFIG_LOCALVERSION="+"' ../Falcon-AZ-config
           grep -qE '^(CONFIG_LOCALVERSION_AUTO=n|# CONFIG_LOCALVERSION_AUTO is not set)$' ../Falcon-AZ-config
@@ -114,12 +114,15 @@ jobs:
           test "$(cat out/include/config/kernel.release)" = "4.9.190+"
           grep -q '#define UTS_RELEASE "4.9.190+"' out/include/generated/utsrelease.h
 
+          echo '== built files =='
+          ls -lh out/vmlinux out/arch/arm64/boot/Image out/kernel/module.o out/arch/arm64/boot/Image.gz-dtb
+
           echo '== display and vermagic checks =='
-          grep -aq '4.9.190-falcon-az' out/vmlinux
-          grep -aq '4.9.190-falcon-az' out/arch/arm64/boot/Image
-          grep -aq '4.9.190+ SMP preempt mod_unload modversions aarch64' out/kernel/module.o
-          grep -aq '4.9.190+ SMP preempt mod_unload modversions aarch64' out/vmlinux
-          grep -aq '4.9.190+ SMP preempt mod_unload modversions aarch64' out/arch/arm64/boot/Image
+          grep -aob '4.9.190-falcon-az' out/vmlinux | head -3
+          grep -aob '4.9.190-falcon-az' out/arch/arm64/boot/Image | head -3
+          grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/kernel/module.o | head -3
+          grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/vmlinux | head -3
+          grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/arch/arm64/boot/Image | head -3
 
           echo '== built-in WMT removal checks =='
           if grep -q 'wmt_ctrl_ul_cmd' ../Falcon-AZ-System.map; then
@@ -139,6 +142,7 @@ jobs:
           echo 'WiFi build checks passed'
 
       - name: Package AnyKernel
+        if: always()
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cp src/out/arch/arm64/boot/Image.gz-dtb anykernel/Image.gz-dtb
@@ -155,6 +159,7 @@ jobs:
           sha256sum Falcon-AZ-CPH2185-CPH2179-*.zip
 
       - name: Upload Falcon-AZ kernel
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Falcon-AZ-CPH2185-CPH2179-${{ github.sha }}
@@ -164,3 +169,19 @@ jobs:
             Falcon-AZ-System.map
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload debug kernel files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Falcon-AZ-debug-${{ github.sha }}
+          path: |
+            src/out/vmlinux
+            src/out/arch/arm64/boot/Image
+            src/out/kernel/module.o
+            src/out/include/config/kernel.release
+            src/out/include/generated/utsrelease.h
+            Falcon-AZ-config
+            Falcon-AZ-System.map
+          if-no-files-found: warn
+          retention-days: 3
