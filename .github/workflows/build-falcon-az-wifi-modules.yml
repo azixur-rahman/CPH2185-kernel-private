@@ -303,7 +303,7 @@ jobs:
           echo '== custom WiFi module checks =='
           test -s out/Module.symvers
           grep -q 'module_layout' out/Module.symvers
-          grep -q ' wmt_export_platform_bridge_register ' out/Module.symvers
+          grep -q 'wmt_export_platform_bridge_register' out/Module.symvers
           python3 - <<'PY'
           import pathlib
           import re
@@ -380,7 +380,6 @@ jobs:
           done
           ls -lh anykernel/wifi_modules
           sed -i 's/^kernel.string=.*/kernel.string=Falcon-AZ Kernel by Azizur Rahman/' anykernel/anykernel.sh
-          sed -i 's/^device.name1=CPH2185$/device.name1=CPH2185\ndevice.name2=CPH2179/' anykernel/anykernel.sh
           chmod +x anykernel/anykernel.sh
           grep -nE 'kernel.string|device.name' anykernel/anykernel.sh
           rm -rf anykernel/.git
