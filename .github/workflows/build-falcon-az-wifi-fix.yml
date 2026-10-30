@@ -1,4 +1,4 @@
-name: Build Falcon-AZ CPH2185 CPH2179 WiFi Fix KSU
+name: Build Falcon-AZ CPH2185 CPH2179 Stock Module WiFi Fix KSU
 
 on:
   workflow_dispatch:
@@ -27,7 +27,6 @@ jobs:
             libncurses5-dev \
             libssl-dev \
             python3 \
-            unzip \
             zip
 
       - name: Download CPH2185 source
@@ -46,103 +45,89 @@ jobs:
           grep -q 'kernelsu' drivers/Makefile
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig
 
-      - name: Apply WiFi fix and keep Falcon-AZ name
+      - name: Apply stock module flow and module loading
         working-directory: src
         run: |
           set -e
 
-          # Match the stock module flow:
-          #   - only the WMT common stack (wmt_detect + /dev/stpwmt) is
-          #     built in, so /dev/wmtdetect exists from boot
-          #   - WLAN/BT/GPS/FM remain the stock vendor modules
-          #   - wmt_loader can finish DO_MODULE_INIT and publish
-          #     vendor.connsys.driver.ready=yes
-          #   - init then insmods wmt_chrdev_wifi.ko and wlan_drv_gen4m.ko
-          grep -qF 'obj-$(CONFIG_MTK_COMBO) += common/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q 'MTK_WCN_BUILT_IN_DRIVER' drivers/misc/mediatek/connectivity/Makefile
-
+          # Keep only connadp (the platform bridge exported to the stock
+          # connectivity modules) built in. WMT/WLAN/BT/GPS/FM must stay
+          # as the stock vendor modules, exactly like the stock kernel.
           python3 - <<'PY'
           import pathlib
+          import re
+
           p = pathlib.Path('drivers/misc/mediatek/connectivity/Makefile')
-          s = p.read_text()
-          drop = [
+          lines = p.read_text().splitlines()
+          changed = []
+          for i, line in enumerate(lines):
+              if re.match(r'^\s*obj-\$\(CONFIG_MTK_[A-Z0-9_]+\)', line):
+                  lines[i] = '# ' + line
+                  changed.append(line.strip())
+          p.write_text('\n'.join(lines) + '\n')
+
+          expected = [
+              'obj-$(CONFIG_MTK_COMBO) += common/',
               'obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/adaptor/',
               'obj-$(CONFIG_MTK_COMBO_CHIP_CONSYS_6765) += wlan/core/gen4m/',
               'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/',
               'obj-$(CONFIG_MTK_COMBO_GPS) += gps/',
               'obj-$(CONFIG_MTK_FMRADIO) += fmradio/',
           ]
-          lines = s.splitlines()
-          for i, line in enumerate(lines):
-              if line.strip() in drop:
-                  lines[i] = line.replace(line.strip(), '# ' + line.strip(), 1)
-          s = '\n'.join(lines) + '\n'
-          if 'obj-$(CONFIG_MTK_COMBO) += common/' not in s:
-              raise SystemExit('common WMT entry disappeared')
-          for entry in drop:
-              if ('# ' + entry) not in s:
+          for entry in expected:
+              if entry not in changed:
                   raise SystemExit('failed to disable built-in ' + entry)
-          p.write_text(s)
 
-          # Only initialize the common WMT driver during wmt_loader's
-          # DO_MODULE_INIT. BT/GPS/FM/WLAN are vendor modules and must be
-          # initialized after wmt_loader publishes driver.ready=yes.
-          p = pathlib.Path('drivers/misc/mediatek/connectivity/common/common_detect/drv_init/conn_drv_init.c')
-          s = p.read_text()
-          start = s.index('int do_connectivity_driver_init(int chip_id)')
-          brace = s.index('{', start)
-          depth = 0
-          end = None
-          for i in range(brace, len(s)):
-              if s[i] == '{':
-                  depth += 1
-              elif s[i] == '}':
-                  depth -= 1
-                  if depth == 0:
-                      end = i + 1
-                      break
-          if end is None:
-              raise SystemExit('do_connectivity_driver_init body not found')
-          new_func = '''int do_connectivity_driver_init(int chip_id)
-          {
-              int i_ret = 0;
-
-              /* Only the WMT common stack is built in. WLAN/BT/GPS/FM stay
-               * as the stock vendor modules and load after wmt_loader sets
-               * vendor.connsys.driver.ready=yes.
-               */
-              i_ret = do_common_drv_init(chip_id);
-              if (i_ret)
-                  WMT_DETECT_PR_ERR("do common driver init reported ret:%d\\n", i_ret);
-
-              /* Let wmt_loader publish vendor.connsys.driver.ready=yes.
-               * wmt_launcher then configures HIF and downloads the ROM
-               * patch through /dev/stpwmt, exactly like the stock module.
-               */
-              return 0;
-          }'''
-          s = s[:start] + new_func + s[end:]
-          p.write_text(s)
+          text = p.read_text()
+          if 'obj-y += $(MODULE_NAME).o' not in text:
+              raise SystemExit('connadp build entry disappeared')
           PY
-          grep -q 'Only the WMT common stack is built in' drivers/misc/mediatek/connectivity/common/common_detect/drv_init/conn_drv_init.c
-          ! grep -q 'do_wlan_drv_init(chip_id)' drivers/misc/mediatek/connectivity/common/common_detect/drv_init/conn_drv_init.c
-          ! grep -q 'do_bluetooth_drv_init(chip_id)' drivers/misc/mediatek/connectivity/common/common_detect/drv_init/conn_drv_init.c
 
-          # Block only the vendor wmt_drv copy. The built-in common stack owns
-          # /dev/wmtdetect and /dev/stpwmt. The vendor WLAN/BT/GPS/FM modules
-          # must stay loadable, exactly like stock.
+          grep -q 'obj-y += $(MODULE_NAME).o' drivers/misc/mediatek/connectivity/Makefile
+          grep -q '# obj-$(CONFIG_MTK_COMBO) += common/' drivers/misc/mediatek/connectivity/Makefile
+          grep -q '# obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/adaptor/' drivers/misc/mediatek/connectivity/Makefile
+          grep -q '# obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/' drivers/misc/mediatek/connectivity/Makefile
+          grep -q '# obj-$(CONFIG_MTK_COMBO_GPS) += gps/' drivers/misc/mediatek/connectivity/Makefile
+          grep -q '# obj-$(CONFIG_MTK_FMRADIO) += fmradio/' drivers/misc/mediatek/connectivity/Makefile
+
+          # Never enter the vendor-symlink branch: standalone CI has no
+          # ../vendor/mediatek/kernel_modules tree.
+          sed -i '/^CONFIG_WLAN_DRV_BUILD_IN=/d' arch/arm64/configs/CPH2185_defconfig
+
+          # Allow the stock vendor modules to load even when their
+          # modversions CRCs or vermagic differ from this build.
           python3 - <<'PY'
           import pathlib
+
           p = pathlib.Path('kernel/module.c')
           s = p.read_text()
-          old = 'static char *module_blacklist;\n'
-          new = ('/* Vendor wmt_drv is replaced by the built-in common WMT stack. */\n'
-                 'static char *module_blacklist = "wmt_drv";\n')
-          if s.count(old) != 1:
-              raise SystemExit('module_blacklist declaration not found exactly once')
-          p.write_text(s.replace(old, new, 1))
+          old = ('\t//FIXME\n'
+                 '\tflags |= MODULE_INIT_IGNORE_MODVERSIONS;\n'
+                 '\tflags |= MODULE_INIT_IGNORE_VERMAGIC;\n')
+          new = ('\t/* Load the stock vendor modules even when their symbol CRCs differ. */\n'
+                 '\tflags |= MODULE_INIT_IGNORE_MODVERSIONS;\n'
+                 '\tflags |= MODULE_INIT_IGNORE_VERMAGIC;\n')
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'MODULE_INIT_IGNORE_MODVERSIONS' not in s or 'MODULE_INIT_IGNORE_VERMAGIC' not in s:
+              marker = '\tchar *after_dashes;\n\n'
+              if marker not in s:
+                  raise SystemExit('load_module insertion point not found')
+              s = s.replace(marker, marker + new, 1)
+          if 'module_blacklist = "wmt_drv"' in s:
+              raise SystemExit('unexpected wmt_drv blacklist still present')
+          p.write_text(s)
           PY
-          grep -q 'module_blacklist = "wmt_drv";' kernel/module.c
+
+          grep -q 'MODULE_INIT_IGNORE_MODVERSIONS' kernel/module.c
+          grep -q 'MODULE_INIT_IGNORE_VERMAGIC' kernel/module.c
+          ! grep -q 'module_blacklist = "wmt_drv"' kernel/module.c
+
+          # Force load/unload support, and no module signature gate.
+          sed -i 's/^# CONFIG_MODULE_FORCE_LOAD is not set/CONFIG_MODULE_FORCE_LOAD=y/' arch/arm64/configs/CPH2185_defconfig
+          sed -i 's/^# CONFIG_MODULE_FORCE_UNLOAD is not set/CONFIG_MODULE_FORCE_UNLOAD=y/' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_MODULE_FORCE_LOAD=y' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_MODULE_FORCE_UNLOAD=y' arch/arm64/configs/CPH2185_defconfig
 
           # Stock modules require vermagic 4.9.190+ exactly.
           sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="+"/' arch/arm64/configs/CPH2185_defconfig
@@ -150,10 +135,18 @@ jobs:
           grep -q '^CONFIG_LOCALVERSION="+"' arch/arm64/configs/CPH2185_defconfig
           grep -q '^CONFIG_LOCALVERSION_AUTO=n' arch/arm64/configs/CPH2185_defconfig
 
+          # Keep the known-working touch configuration.
+          grep -q '^CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI=y' arch/arm64/configs/CPH2185_defconfig
+          if ! grep -q 'novatek,swrst-n8-addr' arch/arm64/boot/dts/mediatek/oppo6765.dts; then
+              git apply ../packaging/falcon-az-touch-fix.patch
+          fi
+          grep -q 'novatek,swrst-n8-addr' arch/arm64/boot/dts/mediatek/oppo6765.dts
+
           # Keep the Falcon-AZ display name without changing UTS_RELEASE.
           # UTS_RELEASE stays 4.9.190+ so stock vendor module vermagic matches.
           python3 - <<'PY'
           import pathlib
+
           p = pathlib.Path('init/version.c')
           s = p.read_text()
           s = s.replace('.release\t= UTS_RELEASE,', '.release\t= "4.9.190-falcon-az",')
@@ -162,7 +155,6 @@ jobs:
           PY
           grep -q '4.9.190-falcon-az' init/version.c
           grep -nE 'CONFIG_LOCALVERSION|CONFIG_LOCALVERSION_AUTO' arch/arm64/configs/CPH2185_defconfig
-          grep -n '4.9.190-falcon-az' init/version.c
 
       - name: Build kernel and DTBs
         working-directory: src
@@ -178,9 +170,9 @@ jobs:
           ls -lh out/arch/arm64/boot/Image.gz-dtb
           cp out/.config ../Falcon-AZ-config
           cp out/System.map ../Falcon-AZ-System.map || true
-          grep -E '^CONFIG_LOCALVERSION|^CONFIG_KSU|^CONFIG_KSU_SUSFS|^CONFIG_MODVERSIONS' ../Falcon-AZ-config | head -30
+          grep -E '^CONFIG_LOCALVERSION|^CONFIG_KSU|^CONFIG_KSU_SUSFS|^CONFIG_MODULE_FORCE|^CONFIG_MODVERSIONS' ../Falcon-AZ-config | head -30
 
-      - name: Verify Falcon-AZ WiFi build
+      - name: Verify Falcon-AZ stock module WiFi build
         working-directory: src
         run: |
           set -ex
@@ -190,6 +182,8 @@ jobs:
           grep -q '^CONFIG_KSU=y' ../Falcon-AZ-config
           grep -q '^CONFIG_KSU_SUSFS=y' ../Falcon-AZ-config
           grep -q '^CONFIG_MODVERSIONS=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MODULE_FORCE_LOAD=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MODULE_FORCE_UNLOAD=y' ../Falcon-AZ-config
 
           echo '== kernel release checks =='
           test "$(cat out/include/config/kernel.release)" = "4.9.190+"
@@ -203,18 +197,16 @@ jobs:
           grep -aob '4.9.190-falcon-az' out/arch/arm64/boot/Image | head -3
           grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/kernel/module.o | head -3
           grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/vmlinux | head -3
-          grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/arch/arm64/boot/Image | head -3
 
-          echo '== built-in WMT checks =='
-          grep -q 'wmt_ctrl_ul_cmd' ../Falcon-AZ-System.map
-          grep -q 'mtk_wcn_common_drv_init' ../Falcon-AZ-System.map
-          grep -aq 'wmtdetect' out/vmlinux
-          grep -aq 'module_blacklist' out/kernel/module.o
-          grep -aq 'wmt_drv' out/kernel/module.o
-
-          echo '== stock module flow checks =='
+          echo '== connadp bridge checks =='
+          grep -q ' wmt_export_platform_bridge_register$' ../Falcon-AZ-System.map
+          grep -q ' wifi_irq$' ../Falcon-AZ-System.map
           test -s out/drivers/misc/mediatek/connectivity/connadp.o
-          test -s out/drivers/misc/mediatek/connectivity/common/wmt_drv.o
+
+          echo '== no built-in connectivity driver checks =='
+          ! grep -q ' mtk_wcn_common_drv_init$' ../Falcon-AZ-System.map
+          ! grep -q ' wmt_ctrl_ul_cmd$' ../Falcon-AZ-System.map
+          ! grep -q ' wmt_detect_driver_init$' ../Falcon-AZ-System.map
           ! grep -q ' wlanProbe$' ../Falcon-AZ-System.map
           ! grep -q ' glRegisterBus$' ../Falcon-AZ-System.map
           ! grep -q ' BT_open$' ../Falcon-AZ-System.map
@@ -224,10 +216,15 @@ jobs:
           test -z "$(find out/drivers/misc/mediatek/connectivity/bt -name '*.o' 2>/dev/null)"
           test -z "$(find out/drivers/misc/mediatek/connectivity/gps -name '*.o' 2>/dev/null)"
           test -z "$(find out/drivers/misc/mediatek/connectivity/fmradio -name '*.o' 2>/dev/null)"
+          test ! -e out/drivers/misc/mediatek/connectivity/common/common_detect/wmt_detect.o
+          test ! -e out/drivers/misc/mediatek/connectivity/common/wmt_drv.o
 
-          echo '== vendor module block check =='
-          grep -q 'module_blacklist = "wmt_drv";' kernel/module.c
-          echo 'WiFi build checks passed'
+          echo '== module loading checks =='
+          grep -q 'MODULE_INIT_IGNORE_MODVERSIONS' kernel/module.c
+          grep -q 'MODULE_INIT_IGNORE_VERMAGIC' kernel/module.c
+          ! grep -q 'module_blacklist = "wmt_drv"' kernel/module.c
+          grep -aq 'MODULE_INIT_IGNORE_MODVERSIONS' out/kernel/module.o || true
+          echo 'Stock module WiFi build checks passed'
 
       - name: Package AnyKernel
         if: always()
