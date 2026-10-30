@@ -95,7 +95,7 @@ replace_kernel() {
   esac;
   [ "$BOOT_PAGE" -ge 512 ] || abort "Invalid boot page size. Aborting...";
   [ "$header_version" -le 2 ] || abort "Unsupported Android boot header version. Aborting...";
-  [ "$header_size" -le "$BOOT_PAGE" ] || abort "Invalid Android boot header size. Aborting...";
+  [ "$header_size" -le "$BOOT_PAGE" ] || abort "Invalid boot header size. Aborting...";
   [ "$rec_size" -eq 0 ] || abort "Recovery DTBO boot layout is not supported by this installer. Aborting...";
 
   old_kernel_end=$((BOOT_PAGE + $(align_to_page "$old_size" "$BOOT_PAGE")));
@@ -154,87 +154,223 @@ write_boot() {
   dd if="$AKHOME/boot-new.img" of="$BLOCK" bs=1048576 2>/dev/null || abort "Flashing boot image failed. Aborting...";
 }
 
-install_wifi_modules() {
-  local src module part mnt backup candidate tmp
-  src="$AKHOME/wifi_modules";
-  backup="/sdcard/Falcon-AZ-stock-wifi-modules";
-  mnt="";
+file_size() {
+  wc -c < "$1" 2>/dev/null | tr -d '[:space:]';
+}
 
-  [ -d "$src" ] || return 0;
-  ui_print "Installing Falcon-AZ WiFi modules...";
-
+mount_vendor() {
+  local candidate part;
   for candidate in /vendor /system/vendor /system_root/vendor; do
     if [ -d "$candidate/lib/modules" ]; then
       mnt="$candidate";
-      break;
+      return 0;
     fi;
   done;
 
-  if [ -z "$mnt" ]; then
-    mkdir -p "$AKHOME/vendor_mnt";
-    for part in /dev/block/bootdevice/by-name/vendor /dev/block/by-name/vendor /dev/block/mapper/vendor; do
+  mkdir -p "$AKHOME/vendor_mnt";
+  for part in /dev/block/mapper/vendor$SLOT /dev/block/mapper/vendor \
+              /dev/block/bootdevice/by-name/vendor$SLOT \
+              /dev/block/bootdevice/by-name/vendor \
+              /dev/block/by-name/vendor$SLOT /dev/block/by-name/vendor; do
+    [ -e "$part" ] || continue;
+    if mount -o rw "$part" "$AKHOME/vendor_mnt" 2>/dev/null; then
+      mnt="$AKHOME/vendor_mnt";
+      mounted_here=1;
+      vendor_block="$part";
+      return 0;
+    fi;
+  done;
+
+  if command -v lptools_static >/dev/null 2>&1; then
+    lptools_static map vendor$SLOT 2>/dev/null;
+    for part in /dev/block/mapper/vendor$SLOT /dev/block/mapper/vendor; do
       [ -e "$part" ] || continue;
       if mount -o rw "$part" "$AKHOME/vendor_mnt" 2>/dev/null; then
         mnt="$AKHOME/vendor_mnt";
-        break;
+        mounted_here=1;
+        vendor_block="$part";
+        return 0;
       fi;
     done;
   fi;
 
-  if [ -z "$mnt" ]; then
-    ui_print "! Could not mount the vendor partition.";
-    ui_print "! Copying modules to /sdcard/Falcon-AZ-wifi-modules instead.";
-    mkdir -p /sdcard/Falcon-AZ-wifi-modules;
-    cp -f "$src"/*.ko /sdcard/Falcon-AZ-wifi-modules/ 2>/dev/null;
-    return 0;
-  fi;
+  for candidate in /vendor /system/vendor /system_root/vendor; do
+    mount -o rw "$candidate" 2>/dev/null;
+    if [ -d "$candidate/lib/modules" ]; then
+      mnt="$candidate";
+      return 0;
+    fi;
+  done;
 
+  return 1;
+}
+
+make_vendor_writable() {
+  local testfile part;
+  testfile="$mnt/lib/modules/.falcon-write-test";
   mount -o remount,rw "$mnt" 2>/dev/null || mount -o rw,remount "$mnt" 2>/dev/null;
-  if ! touch "$mnt/lib/modules/.falcon-write-test" 2>/dev/null; then
-    ui_print "! /vendor/lib/modules is not writable.";
-    ui_print "! Copying modules to /sdcard/Falcon-AZ-wifi-modules instead.";
-    mkdir -p /sdcard/Falcon-AZ-wifi-modules;
-    cp -f "$src"/*.ko /sdcard/Falcon-AZ-wifi-modules/ 2>/dev/null;
+  if touch "$testfile" 2>/dev/null; then
+    rm -f "$testfile";
     return 0;
   fi;
-  rm -f "$mnt/lib/modules/.falcon-write-test";
 
-  if ! mkdir -p "$backup" 2>/dev/null; then
-    backup="/data/media/0/Falcon-AZ-stock-wifi-modules";
-    mkdir -p "$backup" 2>/dev/null || backup="";
+  if [ -z "$vendor_block" ]; then
+    vendor_block=$(grep " $mnt " /proc/mounts 2>/dev/null | head -1 | cut -d' ' -f1);
+  fi;
+  [ "$mnt" = "$AKHOME/vendor_mnt" ] || umount "$mnt" 2>/dev/null;
+  umount "$AKHOME/vendor_mnt" 2>/dev/null;
+
+  for part in "$vendor_block" /dev/block/mapper/vendor$SLOT /dev/block/mapper/vendor \
+              /dev/block/bootdevice/by-name/vendor$SLOT \
+              /dev/block/bootdevice/by-name/vendor \
+              /dev/block/by-name/vendor$SLOT /dev/block/by-name/vendor; do
+    [ -n "$part" ] || continue;
+    [ -e "$part" ] || continue;
+    mkdir -p "$AKHOME/vendor_mnt";
+    if mount -o rw "$part" "$AKHOME/vendor_mnt" 2>/dev/null; then
+      mnt="$AKHOME/vendor_mnt";
+      mounted_here=1;
+      vendor_block="$part";
+      testfile="$mnt/lib/modules/.falcon-write-test";
+      if touch "$testfile" 2>/dev/null; then
+        rm -f "$testfile";
+        return 0;
+      fi;
+    fi;
+  done;
+
+  return 1;
+}
+
+choose_backup_dir() {
+  local candidate;
+  for candidate in /data/media/0 /sdcard /storage/emulated/0 /tmp; do
+    [ -d "$candidate" ] || continue;
+    if mkdir -p "$candidate/Falcon-AZ-stock-wifi-modules" 2>/dev/null &&
+       touch "$candidate/Falcon-AZ-stock-wifi-modules/.falcon-write-test" 2>/dev/null; then
+      rm -f "$candidate/Falcon-AZ-stock-wifi-modules/.falcon-write-test";
+      backup="$candidate/Falcon-AZ-stock-wifi-modules";
+      return 0;
+    fi;
+  done;
+  backup="";
+  return 1;
+}
+
+copy_modules_to_storage() {
+  local candidate;
+  for candidate in /data/media/0 /sdcard /storage/emulated/0; do
+    [ -d "$candidate" ] || continue;
+    if mkdir -p "$candidate/Falcon-AZ-wifi-modules" 2>/dev/null; then
+      cp -f "$src"/*.ko "$candidate/Falcon-AZ-wifi-modules/" 2>/dev/null;
+      ui_print "Modules copied to $candidate/Falcon-AZ-wifi-modules";
+      return 0;
+    fi;
+  done;
+  return 1;
+}
+
+install_wifi_modules() {
+  local src module dst tmp failed
+  src="$AKHOME/wifi_modules";
+  mnt="";
+  backup="";
+  vendor_block="";
+  mounted_here=0;
+  failed=0;
+
+  ui_print "Installing Falcon-AZ WiFi modules...";
+  if [ ! -d "$src" ]; then
+    ui_print "! WiFi module payload missing from the package.";
+    return 1;
+  fi;
+  for module in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko; do
+    if [ ! -s "$src/$module" ]; then
+      ui_print "! Missing $module in the package.";
+      return 1;
+    fi;
+  done;
+
+  if ! mount_vendor; then
+    ui_print "! Could not mount the vendor partition.";
+    ui_print "! In recovery, open Mount and tick Vendor, then flash again.";
+    copy_modules_to_storage;
+    return 1;
+  fi;
+
+  if ! make_vendor_writable; then
+    ui_print "! /vendor/lib/modules is not writable.";
+    ui_print "! In recovery, open Mount and tick Vendor, then flash again.";
+    copy_modules_to_storage;
+    return 1;
+  fi;
+
+  if ! choose_backup_dir; then
+    ui_print "! Could not create a stock WiFi module backup.";
+    ui_print "! Mount internal storage in recovery and flash again.";
+    return 1;
   fi;
 
   ui_print "Backing up stock WiFi modules...";
   for module in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko; do
-    if [ -f "$mnt/lib/modules/$module" ] && [ "$backup" ] && [ ! -f "$backup/$module" ]; then
+    if [ ! -f "$mnt/lib/modules/$module" ]; then
+      ui_print "! Stock $module is missing; cannot back it up.";
+      return 1;
+    fi;
+    if [ ! -f "$backup/$module" ]; then
       cp -f "$mnt/lib/modules/$module" "$backup/$module" 2>/dev/null;
+      if [ "$(file_size "$backup/$module")" != "$(file_size "$mnt/lib/modules/$module")" ]; then
+        ui_print "! Failed to back up $module.";
+        return 1;
+      fi;
     fi;
   done;
 
   ui_print "Replacing stock WiFi modules...";
   for module in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko; do
-    [ -s "$src/$module" ] || { ui_print "! Missing $module in package."; continue; };
+    dst="$mnt/lib/modules/$module";
     tmp="$mnt/lib/modules/.falcon-$module";
-    if cp -f "$src/$module" "$tmp" 2>/dev/null && mv -f "$tmp" "$mnt/lib/modules/$module" 2>/dev/null; then
-      chmod 0644 "$mnt/lib/modules/$module" 2>/dev/null;
-      chown 0:0 "$mnt/lib/modules/$module" 2>/dev/null;
+    rm -f "$tmp" 2>/dev/null;
+    if cp -f "$src/$module" "$tmp" 2>/dev/null &&
+       [ "$(file_size "$tmp")" = "$(file_size "$src/$module")" ] &&
+       mv -f "$tmp" "$dst" 2>/dev/null &&
+       [ "$(file_size "$dst")" = "$(file_size "$src/$module")" ]; then
+      chmod 0644 "$dst" 2>/dev/null;
+      chown 0:0 "$dst" 2>/dev/null;
       if command -v chcon >/dev/null 2>&1; then
-        chcon u:object_r:vendor_file:s0 "$mnt/lib/modules/$module" 2>/dev/null;
+        chcon u:object_r:vendor_file:s0 "$dst" 2>/dev/null;
       fi;
       ui_print "  installed $module";
     else
       rm -f "$tmp" 2>/dev/null;
-      if [ "$backup" ] && [ -f "$backup/$module" ]; then
-        cp -f "$backup/$module" "$mnt/lib/modules/$module" 2>/dev/null;
-      fi;
-      ui_print "! Failed to install $module; stock copy restored.";
+      ui_print "! Failed to install $module.";
+      failed=1;
     fi;
   done;
+
+  if [ "$failed" != 0 ]; then
+    ui_print "! Restoring stock WiFi modules...";
+    for module in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko; do
+      if [ -f "$backup/$module" ]; then
+        cp -f "$backup/$module" "$mnt/lib/modules/$module" 2>/dev/null;
+      fi;
+    done;
+    sync;
+    return 1;
+  fi;
+
   sync;
-  [ "$backup" ] && ui_print "Stock WiFi module backup: $backup";
-  ui_print "WiFi module installation finished.";
+  ui_print "WiFi modules installed.";
+  ui_print "Stock WiFi module backup: $backup";
+  return 0;
 }
 
 dump_boot;
 write_boot;
-install_wifi_modules;
+if ! install_wifi_modules; then
+  ui_print "! Restoring the previous boot image...";
+  blockdev --setrw "$BLOCK" 2>/dev/null;
+  dd if="$BOOTIMG" of="$BLOCK" bs=1048576 2>/dev/null;
+  sync;
+  abort "WiFi module installation failed. Previous boot image restored.";
+fi;
