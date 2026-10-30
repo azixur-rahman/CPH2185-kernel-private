@@ -1,0 +1,432 @@
+name: Build Falcon-AZ CPH2185 CPH2179 Custom WiFi Modules KSU
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            flex \
+            gcc-aarch64-linux-gnu \
+            libelf-dev \
+            libncurses5-dev \
+            libssl-dev \
+            python3 \
+            zip
+
+      - name: Download CPH2185 source
+        run: |
+          curl -L --retry 5 --retry-all-errors -o source.tar.gz \
+            "https://codeload.github.com/leonardrua/kernel_oppo_CPH2185/tar.gz/a241505b43662495457ebba72bc6685f756dbfa8"
+          mkdir -p src
+          tar -xzf source.tar.gz -C src --strip-components=1
+          test -f src/arch/arm64/configs/CPH2185_defconfig
+
+      - name: Setup KernelSU BakaSU and SUSFS
+        working-directory: src
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/leonardrua/BakaSU/main/kernel/setup.sh" | bash -s main
+          test -d KernelSU/kernel
+          grep -q 'kernelsu' drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig
+
+      - name: Apply module flow and strict module loading
+        working-directory: src
+        run: |
+          set -e
+
+          # Keep only connadp (the platform bridge exported to the
+          # connectivity modules) built in. The WMT/WLAN stack is built as
+          # external modules against this kernel. BT/GPS/FM remain stock
+          # and are out of scope for this WiFi fix.
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          p = pathlib.Path('drivers/misc/mediatek/connectivity/Makefile')
+          lines = p.read_text().splitlines()
+          changed = []
+          for i, line in enumerate(lines):
+              if re.match(r'^\s*obj-\$\(CONFIG_MTK_[A-Z0-9_]+\)', line):
+                  lines[i] = '# ' + line
+                  changed.append(line.strip())
+          p.write_text('\n'.join(lines) + '\n')
+
+          expected = [
+              'obj-$(CONFIG_MTK_COMBO) += common/',
+              'obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/adaptor/',
+              'obj-$(CONFIG_MTK_COMBO_CHIP_CONSYS_6765) += wlan/core/gen4m/',
+              'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/',
+              'obj-$(CONFIG_MTK_COMBO_GPS) += gps/',
+              'obj-$(CONFIG_MTK_FMRADIO) += fmradio/',
+          ]
+          for entry in expected:
+              if entry not in changed:
+                  raise SystemExit('failed to disable built-in ' + entry)
+
+          text = p.read_text()
+          if 'obj-y += $(MODULE_NAME).o' not in text:
+              raise SystemExit('connadp build entry disappeared')
+          PY
+
+          grep -q 'obj-y += $(MODULE_NAME).o' drivers/misc/mediatek/connectivity/Makefile
+          ! grep -qE '^[[:space:]]*obj-\$\(CONFIG_MTK_' drivers/misc/mediatek/connectivity/Makefile
+
+          # Never enter the vendor-symlink branch: standalone CI has no
+          # ../vendor/mediatek/kernel_modules tree.
+          sed -i '/^CONFIG_WLAN_DRV_BUILD_IN=/d' arch/arm64/configs/CPH2185_defconfig
+
+          # WiFi will be provided by modules built from this exact source
+          # tree, so the stock vendor module ABI is no longer used. Do not
+          # change struct module: the kernel and our modules must agree.
+          #
+          # The source tree forces MODULE_INIT_IGNORE_* on. Disable it so
+          # only modules built against this exact kernel can load.
+          python3 - <<'PY'
+          import pathlib
+
+          p = pathlib.Path('kernel/module.c')
+          s = p.read_text()
+          old = ('\t//FIXME\n'
+                 '\tflags |= MODULE_INIT_IGNORE_MODVERSIONS;\n'
+                 '\tflags |= MODULE_INIT_IGNORE_VERMAGIC;\n')
+          new = '\t/* Enforce the exact kernel/module ABI. */\n'
+          if old in s:
+              s = s.replace(old, new, 1)
+          else:
+              s = s.replace('\tflags |= MODULE_INIT_IGNORE_MODVERSIONS;\n', '')
+              s = s.replace('\tflags |= MODULE_INIT_IGNORE_VERMAGIC;\n', '')
+          p.write_text(s)
+          PY
+          ! grep -qE '^[[:space:]]*flags \|= MODULE_INIT_IGNORE_(MODVERSIONS|VERMAGIC);' kernel/module.c
+
+          # Force load/unload support, and no module signature gate.
+          sed -i 's/^# CONFIG_MODULE_FORCE_LOAD is not set/CONFIG_MODULE_FORCE_LOAD=y/' arch/arm64/configs/CPH2185_defconfig
+          sed -i 's/^# CONFIG_MODULE_FORCE_UNLOAD is not set/CONFIG_MODULE_FORCE_UNLOAD=y/' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_MODULE_FORCE_LOAD=y' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_MODULE_FORCE_UNLOAD=y' arch/arm64/configs/CPH2185_defconfig
+
+          # The custom modules must use the stock vermagic 4.9.190+ exactly.
+          sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="+"/' arch/arm64/configs/CPH2185_defconfig
+          sed -i 's/^CONFIG_LOCALVERSION_AUTO=.*/CONFIG_LOCALVERSION_AUTO=n/' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_LOCALVERSION="+"' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_LOCALVERSION_AUTO=n' arch/arm64/configs/CPH2185_defconfig
+
+          # Keep the known-working touch configuration.
+          grep -q '^CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI=y' arch/arm64/configs/CPH2185_defconfig
+          if ! grep -q 'novatek,swrst-n8-addr' arch/arm64/boot/dts/mediatek/oppo6765.dts; then
+              git apply ../packaging/falcon-az-touch-fix.patch
+          fi
+          grep -q 'novatek,swrst-n8-addr' arch/arm64/boot/dts/mediatek/oppo6765.dts
+
+          # Keep the Falcon-AZ display name without changing UTS_RELEASE.
+          # UTS_RELEASE stays 4.9.190+ so the module vermagic matches stock.
+          python3 - <<'PY'
+          import pathlib
+
+          p = pathlib.Path('init/version.c')
+          s = p.read_text()
+          s = s.replace('.release\t= UTS_RELEASE,', '.release\t= "4.9.190-falcon-az",')
+          s = s.replace('"Linux version " UTS_RELEASE', '"Linux version 4.9.190-falcon-az"')
+          p.write_text(s)
+          PY
+          grep -q '4.9.190-falcon-az' init/version.c
+          grep -nE 'CONFIG_LOCALVERSION|CONFIG_LOCALVERSION_AUTO' arch/arm64/configs/CPH2185_defconfig
+
+      - name: Build kernel and DTBs
+        working-directory: src
+        env:
+          ARCH: arm64
+          CROSS_COMPILE: aarch64-linux-gnu-
+          ODM_WT_EDIT: "yes"
+          VENDOR_EDIT: "1"
+        run: |
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CPH2185_defconfig
+          make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz-dtb dtbs
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          ls -lh out/arch/arm64/boot/Image.gz-dtb
+          cp out/.config ../Falcon-AZ-config
+          cp out/System.map ../Falcon-AZ-System.map || true
+          grep -E '^CONFIG_LOCALVERSION|^CONFIG_KSU|^CONFIG_KSU_SUSFS|^CONFIG_MODULE_FORCE|^CONFIG_MODVERSIONS' ../Falcon-AZ-config | head -30
+
+      - name: Build custom WiFi modules
+        working-directory: src
+        env:
+          ARCH: arm64
+          CROSS_COMPILE: aarch64-linux-gnu-
+        run: |
+          set -ex
+
+          # Build the WiFi stack from this exact source tree against the
+          # kernel we just built. This is the fix for the stock vendor
+          # module ABI mismatch: kernel and modules now share one build.
+          python3 - <<'PY'
+          import pathlib
+
+          base = pathlib.Path('drivers/misc/mediatek/connectivity')
+
+          # Build the WMT core and the WiFi character device as modules.
+          # The vendor Makefiles use the same obj-y line in both branches of
+          # an if/else, so keep exactly one obj-m line per file.
+          for rel in ('common/Makefile', 'wlan/adaptor/Makefile'):
+              p = base / rel
+              out = []
+              added = False
+              for line in p.read_text().splitlines():
+                  if line.strip() == 'obj-y += $(MODULE_NAME).o':
+                      if not added:
+                          out.append('obj-m += $(MODULE_NAME).o')
+                          added = True
+                  else:
+                      out.append(line)
+              p.write_text('\n'.join(out) + '\n')
+
+          # The gen4m driver selects its module name from WLAN_CHIP_ID and
+          # CONFIG_MTK_COMBO_WIFI_HIF. Build only the module variant.
+          p = base / 'wlan/core/gen4m/Makefile'
+          s = p.read_text()
+          s = s.replace('obj-$(CONFIG_MTK_WIFI_ONLY) += $(MODULE_NAME).o',
+                        '# obj-$(CONFIG_MTK_WIFI_ONLY) += $(MODULE_NAME).o')
+          s = s.replace('obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o',
+                        'obj-m += $(MODULE_NAME).o')
+          s = s.replace('obj-y += $(MODULE_NAME).o',
+                        '# obj-y += $(MODULE_NAME).o')
+          p.write_text(s)
+
+          # Vendor trees build with -Werror on an old toolchain. The CI
+          # compiler emits extra warnings, so do not promote them to errors.
+          for rel in ('common/Makefile', 'wlan/adaptor/Makefile',
+                      'wlan/core/gen4m/Makefile'):
+              p = base / rel
+              s = p.read_text().replace(' -Werror', '').replace('-Werror ', '')
+              p.write_text(s)
+          PY
+          ! grep -q -- '-Werror' drivers/misc/mediatek/connectivity/common/Makefile \
+            drivers/misc/mediatek/connectivity/wlan/adaptor/Makefile \
+            drivers/misc/mediatek/connectivity/wlan/core/gen4m/Makefile
+          grep -n 'obj-m' drivers/misc/mediatek/connectivity/common/Makefile \
+            drivers/misc/mediatek/connectivity/wlan/adaptor/Makefile \
+            drivers/misc/mediatek/connectivity/wlan/core/gen4m/Makefile
+
+          COMMON_OPTS="MTK_PLATFORM=mt6765 MTK_COMBO_CHIP=CONNAC WLAN_CHIP_ID=6765 MTK_ANDROID_WMT=y CONFIG_MTK_COMBO_WIFI_HIF=axi TARGET_BUILD_VARIANT=user KBUILD_MODPOST_FAIL_ON_WARNINGS=n"
+
+          if ! grep -q ' module_layout ' out/Module.symvers 2>/dev/null; then
+            make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules
+          fi
+          test -s out/Module.symvers
+          grep -q ' module_layout ' out/Module.symvers
+
+          make -C . O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            M="$PWD/drivers/misc/mediatek/connectivity/common" \
+            CONFIG_MTK_COMBO=y CONFIG_MTK_COMBO_CHIP='"CONSYS_6765"' \
+            CONFIG_MTK_COMBO_WIFI=y CONFIG_MTK_COMBO_CHIP_CONSYS_6765=y \
+            CONFIG_MTK_CONN_LTE_IDC_SUPPORT=y CONFIG_MTK_CONNSYS_DEDICATED_LOG_PATH=y \
+            $COMMON_OPTS modules
+
+          make -C . O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            M="$PWD/drivers/misc/mediatek/connectivity/wlan/adaptor" \
+            CONFIG_MTK_COMBO=y CONFIG_MTK_COMBO_CHIP='"CONSYS_6765"' \
+            CONFIG_MTK_COMBO_WIFI=y CONFIG_MTK_COMBO_CHIP_CONSYS_6765=y \
+            CONFIG_MTK_CONN_LTE_IDC_SUPPORT=y CONFIG_MTK_CONNSYS_DEDICATED_LOG_PATH=y \
+            KBUILD_EXTRA_SYMBOLS="$PWD/drivers/misc/mediatek/connectivity/common/Module.symvers" \
+            $COMMON_OPTS modules
+
+          make -C . O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            M="$PWD/drivers/misc/mediatek/connectivity/wlan/core/gen4m" \
+            MODULE_NAME=wlan_drv_gen4m \
+            CONFIG_MTK_COMBO=y CONFIG_MTK_COMBO_CHIP='"CONSYS_6765"' \
+            CONFIG_MTK_COMBO_WIFI=y CONFIG_MTK_COMBO_CHIP_CONSYS_6765=y \
+            CONFIG_MTK_CONN_LTE_IDC_SUPPORT=y CONFIG_MTK_CONNSYS_DEDICATED_LOG_PATH=y \
+            KBUILD_EXTRA_SYMBOLS="$PWD/drivers/misc/mediatek/connectivity/common/Module.symvers $PWD/drivers/misc/mediatek/connectivity/wlan/adaptor/Module.symvers" \
+            $COMMON_OPTS modules
+
+          ls -lh drivers/misc/mediatek/connectivity/common/wmt_drv.ko \
+            drivers/misc/mediatek/connectivity/wlan/adaptor/wmt_chrdev_wifi.ko \
+            drivers/misc/mediatek/connectivity/wlan/core/gen4m/wlan_drv_gen4m.ko
+
+      - name: Verify Falcon-AZ custom module WiFi build
+        working-directory: src
+        run: |
+          set -ex
+          echo '== config checks =='
+          grep -q '^CONFIG_LOCALVERSION="+"' ../Falcon-AZ-config
+          grep -qE '^(CONFIG_LOCALVERSION_AUTO=n|# CONFIG_LOCALVERSION_AUTO is not set)$' ../Falcon-AZ-config
+          grep -q '^CONFIG_KSU=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_KSU_SUSFS=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MODVERSIONS=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MODULE_FORCE_LOAD=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MODULE_FORCE_UNLOAD=y' ../Falcon-AZ-config
+
+          echo '== kernel release checks =='
+          test "$(cat out/include/config/kernel.release)" = "4.9.190+"
+          grep -q '#define UTS_RELEASE "4.9.190+"' out/include/generated/utsrelease.h
+
+          echo '== built files =='
+          ls -lh out/vmlinux out/arch/arm64/boot/Image out/kernel/module.o out/arch/arm64/boot/Image.gz-dtb
+
+          echo '== custom module ABI checks =='
+          ! grep -q 'stock_module_abi_pad' include/linux/module.h
+
+          echo '== display and vermagic checks =='
+          grep -aob '4.9.190-falcon-az' out/vmlinux | head -3
+          grep -aob '4.9.190-falcon-az' out/arch/arm64/boot/Image | head -3
+          grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/kernel/module.o | head -3
+          grep -aob '4.9.190+ SMP preempt mod_unload modversions aarch64' out/vmlinux | head -3
+
+          echo '== connadp bridge checks =='
+          grep -q ' wmt_export_platform_bridge_register$' ../Falcon-AZ-System.map
+          grep -q ' wifi_irq$' ../Falcon-AZ-System.map
+          test -s out/drivers/misc/mediatek/connectivity/connadp.o
+
+          echo '== no built-in connectivity driver checks =='
+          ! grep -q ' mtk_wcn_common_drv_init$' ../Falcon-AZ-System.map
+          ! grep -q ' wmt_ctrl_ul_cmd$' ../Falcon-AZ-System.map
+          ! grep -q ' wmt_detect_driver_init$' ../Falcon-AZ-System.map
+          ! grep -q ' wlanProbe$' ../Falcon-AZ-System.map
+          ! grep -q ' glRegisterBus$' ../Falcon-AZ-System.map
+          ! grep -q ' BT_open$' ../Falcon-AZ-System.map
+          ! grep -q ' fm_ops_open$' ../Falcon-AZ-System.map
+          ! grep -q ' gps_emi_unlocked_ioctl$' ../Falcon-AZ-System.map
+          test -z "$(find out/drivers/misc/mediatek/connectivity/wlan -name '*.o' 2>/dev/null)"
+          test -z "$(find out/drivers/misc/mediatek/connectivity/bt -name '*.o' 2>/dev/null)"
+          test -z "$(find out/drivers/misc/mediatek/connectivity/gps -name '*.o' 2>/dev/null)"
+          test -z "$(find out/drivers/misc/mediatek/connectivity/fmradio -name '*.o' 2>/dev/null)"
+          test ! -e out/drivers/misc/mediatek/connectivity/common/common_detect/wmt_detect.o
+          test ! -e out/drivers/misc/mediatek/connectivity/common/wmt_drv.o
+
+          echo '== custom WiFi module checks =='
+          test -s out/Module.symvers
+          grep -q ' module_layout ' out/Module.symvers
+          grep -q ' wmt_export_platform_bridge_register ' out/Module.symvers
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import struct
+
+          def section_data(path, name):
+              d = pathlib.Path(path).read_bytes()
+              shoff = struct.unpack_from('<Q', d, 0x28)[0]
+              shentsize = struct.unpack_from('<H', d, 0x3a)[0]
+              shnum = struct.unpack_from('<H', d, 0x3c)[0]
+              shstrndx = struct.unpack_from('<H', d, 0x3e)[0]
+              sh = []
+              for i in range(shnum):
+                  o = shoff + i * shentsize
+                  sh.append(struct.unpack_from('<IIQQQQIIQQ', d, o))
+              strtab = sh[shstrndx]
+              def sname(off):
+                  start = strtab[4] + off
+                  end = d.index(b'\0', start)
+                  return d[start:end].decode('utf-8', 'replace')
+              for sec in sh:
+                  if sname(sec[0]) == name:
+                      return d[sec[4]:sec[4] + sec[5]]
+              return b''
+
+          def module_layout_crc(path):
+              data = section_data(path, '__versions')
+              for off in range(0, len(data), 64):
+                  crc = struct.unpack_from('<Q', data, off)[0] & 0xffffffff
+                  name = data[off + 8:off + 64].split(b'\0')[0].decode('utf-8', 'replace')
+                  if name == 'module_layout':
+                      return crc
+              return None
+
+          text = pathlib.Path('out/Module.symvers').read_text()
+          m = re.search(r'^0x([0-9a-fA-F]+)\s+module_layout\s', text, re.M)
+          if not m:
+              raise SystemExit('module_layout CRC not in Module.symvers')
+          kernel_crc = int(m.group(1), 16)
+          print('kernel module_layout CRC: 0x%08x' % kernel_crc)
+          for name in ('wmt_drv', 'wmt_chrdev_wifi', 'wlan_drv_gen4m'):
+              matches = list(pathlib.Path('drivers/misc/mediatek/connectivity').rglob(name + '.ko'))
+              if not matches:
+                  raise SystemExit(name + '.ko not found')
+              path = matches[0]
+              raw = path.read_bytes()
+              if b'vermagic=4.9.190+ SMP preempt mod_unload modversions aarch64' not in raw:
+                  raise SystemExit(name + ' vermagic mismatch')
+              crc = module_layout_crc(path)
+              print(name, 'module_layout CRC: 0x%08x' % (crc or 0))
+              if crc != kernel_crc:
+                  raise SystemExit(name + ' module_layout CRC mismatch')
+          PY
+
+          echo '== module loading checks =='
+          ! grep -qE '^[[:space:]]*flags \|= MODULE_INIT_IGNORE_(MODVERSIONS|VERMAGIC);' kernel/module.c
+          ! grep -q 'module_blacklist = "wmt_drv"' kernel/module.c
+          echo 'Custom module WiFi build checks passed'
+
+      - name: Package AnyKernel
+        if: always()
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          cp src/out/arch/arm64/boot/Image.gz-dtb anykernel/Image.gz-dtb
+          cp packaging/cph2185-anykernel.sh anykernel/anykernel.sh
+          mkdir -p anykernel/wifi_modules
+          for m in wmt_drv wmt_chrdev_wifi wlan_drv_gen4m; do
+            ko=$(find src -name "$m.ko" | head -1)
+            test -s "$ko"
+            cp "$ko" anykernel/wifi_modules/
+          done
+          for m in wmt_drv wmt_chrdev_wifi wlan_drv_gen4m; do
+            test -s "anykernel/wifi_modules/$m.ko"
+          done
+          ls -lh anykernel/wifi_modules
+          sed -i 's/^kernel.string=.*/kernel.string=Falcon-AZ Kernel by Azizur Rahman/' anykernel/anykernel.sh
+          sed -i 's/^device.name1=CPH2185$/device.name1=CPH2185\ndevice.name2=CPH2179/' anykernel/anykernel.sh
+          chmod +x anykernel/anykernel.sh
+          grep -nE 'kernel.string|device.name' anykernel/anykernel.sh
+          rm -rf anykernel/.git
+          cd anykernel
+          zip -r9 "../Falcon-AZ-CPH2185-CPH2179-${GITHUB_SHA::12}.zip" . \
+            -x README.md -x '*placeholder' -x '.git/*'
+          cd ..
+          sha256sum Falcon-AZ-CPH2185-CPH2179-*.zip
+
+      - name: Upload Falcon-AZ kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Falcon-AZ-CPH2185-CPH2179-${{ github.sha }}
+          path: |
+            Falcon-AZ-CPH2185-CPH2179-*.zip
+            Falcon-AZ-config
+            Falcon-AZ-System.map
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload debug kernel files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Falcon-AZ-debug-${{ github.sha }}
+          path: |
+            src/out/vmlinux
+            src/out/arch/arm64/boot/Image
+            src/out/kernel/module.o
+            src/out/Module.symvers
+            src/out/include/config/kernel.release
+            src/out/include/generated/utsrelease.h
+            src/drivers/misc/mediatek/connectivity/common/wmt_drv.ko
+            src/drivers/misc/mediatek/connectivity/wlan/adaptor/wmt_chrdev_wifi.ko
+            src/drivers/misc/mediatek/connectivity/wlan/core/gen4m/wlan_drv_gen4m.ko
+            Falcon-AZ-config
+            Falcon-AZ-System.map
+          if-no-files-found: warn
+          retention-days: 3
