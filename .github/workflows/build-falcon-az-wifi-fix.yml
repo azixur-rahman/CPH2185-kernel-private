@@ -90,6 +90,28 @@ jobs:
           # ../vendor/mediatek/kernel_modules tree.
           sed -i '/^CONFIG_WLAN_DRV_BUILD_IN=/d' arch/arm64/configs/CPH2185_defconfig
 
+          # The stock CPH2185 vendor modules were built against a kernel
+          # whose struct module has an 8-byte larger prefix before init.
+          # Without this pad the kernel reads mod->init from 0x158 while
+          # every stock module stores it at 0x160, so the stock init
+          # function is silently skipped (no /dev/wmtdetect, no WiFi).
+          python3 - <<'PY'
+          import pathlib
+
+          p = pathlib.Path('include/linux/module.h')
+          s = p.read_text()
+          old = '\t/* Startup function. */\n\tint (*init)(void);\n'
+          new = ('\t/* Keep the stock vendor module ABI (init at offset 0x160). */\n'
+                 '\tvoid *stock_module_abi_pad;\n\n'
+                 '\t/* Startup function. */\n'
+                 '\tint (*init)(void);\n')
+          if old not in s:
+              raise SystemExit('struct module init insertion point not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          grep -q 'stock_module_abi_pad' include/linux/module.h
+
           # Allow the stock vendor modules to load even when their
           # modversions CRCs or vermagic differ from this build.
           python3 - <<'PY'
@@ -187,6 +209,10 @@ jobs:
 
           echo '== built files =='
           ls -lh out/vmlinux out/arch/arm64/boot/Image out/kernel/module.o out/arch/arm64/boot/Image.gz-dtb
+
+          echo '== stock module ABI checks =='
+          aarch64-linux-gnu-objdump -d --disassemble=do_init_module out/vmlinux | grep -m1 -E 'ldr[[:space:]]+x0, \[x19, #352\]'
+          ! aarch64-linux-gnu-objdump -d --disassemble=do_init_module out/vmlinux | grep -q -E 'ldr[[:space:]]+x0, \[x19, #344\]'
 
           echo '== display and vermagic checks =='
           grep -aob '4.9.190-falcon-az' out/vmlinux | head -3
