@@ -48,6 +48,10 @@ jobs:
           cp -a a15q/connectivity/. src/drivers/misc/mediatek/connectivity/
           grep -q 'SAE-confirm failed' src/drivers/misc/mediatek/connectivity/wlan/core/gen4m/common/wlan_oid.c
           grep -q 'external_auth' src/drivers/misc/mediatek/connectivity/wlan/core/gen4m/os/linux/gl_init.c
+          sed -i 's#$(TOP)/vendor/mediatek/kernel_modules/connectivity#$(srctree)/drivers/misc/mediatek/connectivity#g' \
+            src/drivers/misc/mediatek/connectivity/wlan/adaptor/Makefile
+          grep -q 'srctree/drivers/misc/mediatek/connectivity/common/common_main/include' \
+            src/drivers/misc/mediatek/connectivity/wlan/adaptor/Makefile
 
       - name: Setup KernelSU BakaSU and SUSFS
         working-directory: src
