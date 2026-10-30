@@ -225,11 +225,11 @@ jobs:
 
           COMMON_OPTS="MTK_PLATFORM=mt6765 MTK_COMBO_CHIP=CONNAC WLAN_CHIP_ID=6765 MTK_ANDROID_WMT=y CONFIG_MTK_COMBO_WIFI_HIF=axi TARGET_BUILD_VARIANT=user KBUILD_MODPOST_FAIL_ON_WARNINGS=n"
 
-          if ! grep -q ' module_layout ' out/Module.symvers 2>/dev/null; then
+          if ! grep -q 'module_layout' out/Module.symvers 2>/dev/null; then
             make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules
           fi
           test -s out/Module.symvers
-          grep -q ' module_layout ' out/Module.symvers
+          grep -q 'module_layout' out/Module.symvers
 
           make -C . O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             M="$PWD/drivers/misc/mediatek/connectivity/common" \
@@ -311,7 +311,7 @@ jobs:
 
           echo '== custom WiFi module checks =='
           test -s out/Module.symvers
-          grep -q ' module_layout ' out/Module.symvers
+          grep -q 'module_layout' out/Module.symvers
           grep -q ' wmt_export_platform_bridge_register ' out/Module.symvers
           python3 - <<'PY'
           import pathlib
