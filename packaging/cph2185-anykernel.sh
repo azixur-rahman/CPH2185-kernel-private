@@ -4,13 +4,14 @@
 # run the bundled magiskboot parser. The installer keeps the stock boot image
 # and replaces its kernel, moving later boot-image components when necessary.
 properties() { '
-kernel.string=CPH2185 Touch Fix by Azizur Rahman
+kernel.string=Falcon-AZ Kernel by Azizur Rahman
 do.devicecheck=1
 do.modules=0
 do.systemless=0
 do.cleanup=1
 do.cleanuponabort=0
 device.name1=CPH2185
+device.name2=CPH2179
 supported.versions=
 supported.patchlevels=
 supported.vendorpatchlevels=
@@ -153,5 +154,87 @@ write_boot() {
   dd if="$AKHOME/boot-new.img" of="$BLOCK" bs=1048576 2>/dev/null || abort "Flashing boot image failed. Aborting...";
 }
 
+install_wifi_modules() {
+  local src module part mnt backup candidate tmp
+  src="$AKHOME/wifi_modules";
+  backup="/sdcard/Falcon-AZ-stock-wifi-modules";
+  mnt="";
+
+  [ -d "$src" ] || return 0;
+  ui_print "Installing Falcon-AZ WiFi modules...";
+
+  for candidate in /vendor /system/vendor /system_root/vendor; do
+    if [ -d "$candidate/lib/modules" ]; then
+      mnt="$candidate";
+      break;
+    fi;
+  done;
+
+  if [ -z "$mnt" ]; then
+    mkdir -p "$AKHOME/vendor_mnt";
+    for part in /dev/block/bootdevice/by-name/vendor /dev/block/by-name/vendor /dev/block/mapper/vendor; do
+      [ -e "$part" ] || continue;
+      if mount -o rw "$part" "$AKHOME/vendor_mnt" 2>/dev/null; then
+        mnt="$AKHOME/vendor_mnt";
+        break;
+      fi;
+    done;
+  fi;
+
+  if [ -z "$mnt" ]; then
+    ui_print "! Could not mount the vendor partition.";
+    ui_print "! Copying modules to /sdcard/Falcon-AZ-wifi-modules instead.";
+    mkdir -p /sdcard/Falcon-AZ-wifi-modules;
+    cp -f "$src"/*.ko /sdcard/Falcon-AZ-wifi-modules/ 2>/dev/null;
+    return 0;
+  fi;
+
+  mount -o remount,rw "$mnt" 2>/dev/null || mount -o rw,remount "$mnt" 2>/dev/null;
+  if ! touch "$mnt/lib/modules/.falcon-write-test" 2>/dev/null; then
+    ui_print "! /vendor/lib/modules is not writable.";
+    ui_print "! Copying modules to /sdcard/Falcon-AZ-wifi-modules instead.";
+    mkdir -p /sdcard/Falcon-AZ-wifi-modules;
+    cp -f "$src"/*.ko /sdcard/Falcon-AZ-wifi-modules/ 2>/dev/null;
+    return 0;
+  fi;
+  rm -f "$mnt/lib/modules/.falcon-write-test";
+
+  if ! mkdir -p "$backup" 2>/dev/null; then
+    backup="/data/media/0/Falcon-AZ-stock-wifi-modules";
+    mkdir -p "$backup" 2>/dev/null || backup="";
+  fi;
+
+  ui_print "Backing up stock WiFi modules...";
+  for module in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko; do
+    if [ -f "$mnt/lib/modules/$module" ] && [ "$backup" ] && [ ! -f "$backup/$module" ]; then
+      cp -f "$mnt/lib/modules/$module" "$backup/$module" 2>/dev/null;
+    fi;
+  done;
+
+  ui_print "Replacing stock WiFi modules...";
+  for module in wmt_drv.ko wmt_chrdev_wifi.ko wlan_drv_gen4m.ko; do
+    [ -s "$src/$module" ] || { ui_print "! Missing $module in package."; continue; };
+    tmp="$mnt/lib/modules/.falcon-$module";
+    if cp -f "$src/$module" "$tmp" 2>/dev/null && mv -f "$tmp" "$mnt/lib/modules/$module" 2>/dev/null; then
+      chmod 0644 "$mnt/lib/modules/$module" 2>/dev/null;
+      chown 0:0 "$mnt/lib/modules/$module" 2>/dev/null;
+      if command -v chcon >/dev/null 2>&1; then
+        chcon u:object_r:vendor_file:s0 "$mnt/lib/modules/$module" 2>/dev/null;
+      fi;
+      ui_print "  installed $module";
+    else
+      rm -f "$tmp" 2>/dev/null;
+      if [ "$backup" ] && [ -f "$backup/$module" ]; then
+        cp -f "$backup/$module" "$mnt/lib/modules/$module" 2>/dev/null;
+      fi;
+      ui_print "! Failed to install $module; stock copy restored.";
+    fi;
+  done;
+  sync;
+  [ "$backup" ] && ui_print "Stock WiFi module backup: $backup";
+  ui_print "WiFi module installation finished.";
+}
+
 dump_boot;
 write_boot;
+install_wifi_modules;
