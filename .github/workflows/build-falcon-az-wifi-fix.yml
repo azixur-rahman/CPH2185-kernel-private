@@ -84,11 +84,7 @@ jobs:
           PY
 
           grep -q 'obj-y += $(MODULE_NAME).o' drivers/misc/mediatek/connectivity/Makefile
-          grep -q '# obj-$(CONFIG_MTK_COMBO) += common/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q '# obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/adaptor/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q '# obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q '# obj-$(CONFIG_MTK_COMBO_GPS) += gps/' drivers/misc/mediatek/connectivity/Makefile
-          grep -q '# obj-$(CONFIG_MTK_FMRADIO) += fmradio/' drivers/misc/mediatek/connectivity/Makefile
+          ! grep -qE '^[[:space:]]*obj-\$\(CONFIG_MTK_' drivers/misc/mediatek/connectivity/Makefile
 
           # Never enter the vendor-symlink branch: standalone CI has no
           # ../vendor/mediatek/kernel_modules tree.
