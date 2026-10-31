@@ -311,7 +311,7 @@ jobs:
           grep -q ' mtk_wcn_wlan_gen4_init$' ../Falcon-AZ-System.map
           grep -q ' glRegisterBus$' ../Falcon-AZ-System.map
           grep -q ' wmt_detect_driver_init$' ../Falcon-AZ-System.map
-          grep -q ' wmt_dev_probe$' ../Falcon-AZ-System.map
+          grep -q ' mtk_wcn_common_drv_init$' ../Falcon-AZ-System.map
 
           echo '== no WiFi module files =='
           test -z "$(find out/drivers/misc/mediatek/connectivity -name '*.ko' -print -quit)"
