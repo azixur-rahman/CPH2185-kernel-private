@@ -1,30 +1,53 @@
-# CPH2185 kernel - Azizur Rahman
+# CPH2185 / CPH2179 Falcon-AZ kernel
 
 **Author:** Azizur Rahman  
 **GitHub:** [azixur-rahman](https://github.com/azixur-rahman)
 
-Public CPH2185 (OPPO A15 / MT6765) kernel workspace.
+Custom kernel for the OPPO A15 (CPH2185) and CPH2179, MT6765.
 
-The full source archive and the touch-fix files are attached to the
-`private-source-backup` release. The tag name is historical; the repository
-and its releases are public.
+## Download
 
-## Contents
+**Falcon-AZ-CPH2185-CPH2179-1083a1b8eb06.zip**
 
-- `CPH2185-FIX.md` - full touch diagnosis and commit history
-- `CPH2185-stock-vs-custom-kernel.txt` - stock vs custom comparison
-- `CPH2185-touch-swrstd-fix.patch` - final kernel patch
-- `packaging/cph2185-anykernel.sh` - CPH2185 AnyKernel installer
-- `packaging/CPH2185-termux-logs.sh` - Termux log collector
-- `.github/workflows/build-anykernel.yml` - build workflow
-- `BUILD-AND-TEST.md` - build and test notes
+https://github.com/azixur-rahman/CPH2185-kernel-private/releases/download/private-source-backup/Falcon-AZ-CPH2185-CPH2179-1083a1b8eb06.zip
 
-## Release assets
+- SHA256: `3d11a605c59c25e348e90ac70fbe253e0e70bf1b508e7f81270c6e0ca8fb118c`
+- Size: `15,557,413` bytes
+- Kernel commit: `1083a1b8eb06ae74622dd5e5f4919041a50d5674`
+- Kernel version: `4.9.190-falcon-az`
+- Same zip for CPH2185 and CPH2179
+- AnyKernel, kernel-only, `do.devicecheck=0`
+- No `boot.img`, no `/vendor` writes, no custom recovery required
 
-- `AnyKernel-CPH2185-fix-touch-swrstd-safe.zip` - flashable kernel zip
-- `kernel_oppo_CPH2185-deprecated-android-4.9-q.zip` - full source archive
-- `CPH2185-touch-swrstd-fix.patch` - apply to the source archive
+## Working features
 
-## Status
+Confirmed working on the phone:
 
-Touch is SOLVED on the CPH2185 with the safe zip. The stock DTBO is unchanged.
+- WiFi: built into the kernel
+- Bluetooth: built into the kernel, `/dev/stpbt` is created during
+  connectivity bring-up
+- Touch: working
+- KernelSU + SUSFS
+- WPDMA descriptors use volatile 32-bit accesses (WiFi crash fix)
+
+## Flash
+
+Flash the zip with your usual AnyKernel method, then reboot.
+No extra modules or vendor files are needed.
+
+## Working source
+
+The complete working kernel source tree is in the **`falcon-az-source`**
+branch. That branch contains only the source tree used for the working
+build - no zip, no build output, no extra files.
+
+This `main` branch holds only the build files:
+
+- `.github/workflows/build-falcon-az-a15q.yml` - builds the kernel and
+  AnyKernel zip
+- `.github/workflows/publish-falcon-az.yml` - verifies the WPDMA descriptor
+  stores and publishes the release asset
+- `source/bt/mt66xx/` - Bluetooth source used by the build
+- `packaging/cph2185-anykernel.sh` - AnyKernel installer
+- `packaging/falcon-az-touch-fix.patch` - touch patch
+- `scripts/check-desc-stores.sh` - WPDMA descriptor verifier
