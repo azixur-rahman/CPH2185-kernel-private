@@ -85,6 +85,48 @@ jobs:
               raise SystemExit('stp_uart buf_lock still active')
 
           # ---------------------------------------------------------------
+          # WPDMA descriptor rings are allocated from the reserved WiFi
+          # region and mapped with ioremap_nocache(), which is Device-nGnRE
+          # on arm64. Device memory rejects unaligned accesses (ESR
+          # 96000061). Clang merges the adjacent 32-bit descriptor words
+          # into one 64-bit store at offset 4, which faults inside
+          # halWpdmaWriteCmd. Qualify the descriptor pointers as volatile
+          # so the driver keeps the intended 32-bit field accesses.
+          # ---------------------------------------------------------------
+          hif_common = base / 'wlan/core/gen4m/os/linux/hif/common'
+
+          hal_pdma = hif_common / 'hal_pdma.c'
+          t = hal_pdma.read_text()
+          if 'struct TXD_STRUCT *pTxD;' not in t:
+              raise SystemExit('hal_pdma TXD declaration not found')
+          t = t.replace('struct TXD_STRUCT *pTxD;',
+                        'volatile struct TXD_STRUCT *pTxD;')
+          t = t.replace('(struct TXD_STRUCT *)',
+                        '(volatile struct TXD_STRUCT *)')
+          if 'struct RXD_STRUCT *pRxD;' not in t:
+              raise SystemExit('hal_pdma RXD declaration not found')
+          t = t.replace('struct RXD_STRUCT *pRxD;',
+                        'volatile struct RXD_STRUCT *pRxD;')
+          t = t.replace('(struct RXD_STRUCT *)',
+                        '(volatile struct RXD_STRUCT *)')
+          hal_pdma.write_text(t)
+
+          kal_pdma = hif_common / 'kal_pdma.c'
+          t = kal_pdma.read_text()
+          if 'struct TXD_STRUCT *pTxD;' not in t:
+              raise SystemExit('kal_pdma TXD declaration not found')
+          t = t.replace('struct TXD_STRUCT *pTxD;',
+                        'volatile struct TXD_STRUCT *pTxD;')
+          t = t.replace('(struct TXD_STRUCT *)',
+                        '(volatile struct TXD_STRUCT *)')
+          kal_pdma.write_text(t)
+
+          if 'volatile struct TXD_STRUCT *pTxD;' not in hal_pdma.read_text():
+              raise SystemExit('hal_pdma volatile descriptor patch failed')
+          if 'volatile struct TXD_STRUCT *pTxD;' not in kal_pdma.read_text():
+              raise SystemExit('kal_pdma volatile descriptor patch failed')
+
+          # ---------------------------------------------------------------
           # Top-level connectivity Makefile: build only the WiFi stack into
           # the kernel. BT/GPS/FM stay out of this kernel, exactly like the
           # previous working build.
