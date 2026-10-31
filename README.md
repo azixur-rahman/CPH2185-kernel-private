@@ -38,8 +38,17 @@ No extra modules or vendor files are needed.
 ## Working source
 
 The complete working kernel source tree is in the **`falcon-az-source`**
-branch. That branch contains only the source tree used for the working
-build - no zip, no build output, no extra files.
+branch:
+
+https://github.com/azixur-rahman/CPH2185-kernel-private/tree/falcon-az-source
+
+Direct download (full source):
+
+- https://github.com/azixur-rahman/CPH2185-kernel-private/archive/refs/heads/falcon-az-source.zip
+- https://github.com/azixur-rahman/CPH2185-kernel-private/archive/refs/heads/falcon-az-source.tar.gz
+
+That branch contains only the source tree used for the working build -
+no zip, no build output, no extra files.
 
 This `main` branch holds only the build files:
 
