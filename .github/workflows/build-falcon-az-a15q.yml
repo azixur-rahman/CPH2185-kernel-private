@@ -79,6 +79,11 @@ jobs:
           p = base / 'Makefile'
           s = p.read_text()
 
+          # The vendor top-level adds -Werror to every connectivity
+          # subdirectory. Old vendor code produces new-toolchain warnings,
+          # so keep those as warnings.
+          s = re.sub(r'(?<!\S)-Werror(?!\S)', '', s)
+
           for entry in (
               'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/',
               'obj-$(CONFIG_MTK_COMBO_GPS) += gps/',
@@ -107,6 +112,8 @@ jobs:
               raise SystemExit('WLAN_DRV_BUILD_IN branch still present')
 
           s = re.sub(r'(?<!\S)-Werror(?!\S)', '', s)
+          if '-Werror' in s:
+              raise SystemExit('top-level -Werror still present')
           p.write_text(s)
 
           # ---------------------------------------------------------------
