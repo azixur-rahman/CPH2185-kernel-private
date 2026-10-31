@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -372,6 +372,22 @@ jobs:
             -czf "../Falcon-AZ-source-${GITHUB_SHA::12}.tar.gz" .
           ls -lh "../Falcon-AZ-source-${GITHUB_SHA::12}.tar.gz"
           sha256sum "../Falcon-AZ-source-${GITHUB_SHA::12}.tar.gz"
+
+      - name: Push working source to falcon-az-source
+        working-directory: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git init -q -b falcon-az-source
+          git config user.name "Azizur Rahman"
+          git config user.email "iremm12rr@gmail.com"
+          git config http.postBuffer 524288000
+          git add -A
+          git commit -q -m "Falcon-AZ 4.9.190 working source: built-in WiFi and Bluetooth, KernelSU SUSFS, touch fix"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:refs/heads/falcon-az-source
 
       - name: Build kernel and DTBs
         working-directory: src
