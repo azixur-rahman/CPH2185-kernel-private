@@ -335,9 +335,9 @@ jobs:
           test -s out/drivers/misc/mediatek/connectivity/common/wmt_drv.o
           test -s out/drivers/misc/mediatek/connectivity/wlan/adaptor/wmt_chrdev_wifi.o
           test -s out/drivers/misc/mediatek/connectivity/wlan/core/gen4m/wlan_6765_axi.o
-          test -s out/drivers/misc/mediatek/connectivity/common/built-in.a
-          test -s out/drivers/misc/mediatek/connectivity/wlan/adaptor/built-in.a
-          test -s out/drivers/misc/mediatek/connectivity/wlan/core/gen4m/built-in.a
+          test -s out/drivers/misc/mediatek/connectivity/common/built-in.o
+          test -s out/drivers/misc/mediatek/connectivity/wlan/adaptor/built-in.o
+          test -s out/drivers/misc/mediatek/connectivity/wlan/core/gen4m/built-in.o
 
           echo '== built-in WiFi symbol checks =='
           grep -q ' wmt_export_platform_bridge_register$' ../Falcon-AZ-System.map
