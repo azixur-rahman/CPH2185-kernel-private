@@ -71,6 +71,19 @@ jobs:
 
           base = pathlib.Path('drivers/misc/mediatek/connectivity')
 
+          # A15_Q turned an unused global spinlock into a real definition.
+          # fs/exfat already exports a global named buf_lock, so keep the
+          # vendor A15_Q line commented exactly like the original kernel.
+          stp_uart = base / 'common/common_main/linux/stp_uart.c'
+          t = stp_uart.read_text()
+          if '\nspinlock_t buf_lock;' not in t:
+              raise SystemExit('stp_uart buf_lock definition not found')
+          t = t.replace('\nspinlock_t buf_lock;',
+                        '\n/* spinlock_t buf_lock; */', 1)
+          stp_uart.write_text(t)
+          if '\nspinlock_t buf_lock;' in stp_uart.read_text():
+              raise SystemExit('stp_uart buf_lock still active')
+
           # ---------------------------------------------------------------
           # Top-level connectivity Makefile: build only the WiFi stack into
           # the kernel. BT/GPS/FM stay out of this kernel, exactly like the
