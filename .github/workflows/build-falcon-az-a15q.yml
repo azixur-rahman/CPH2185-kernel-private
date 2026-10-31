@@ -156,9 +156,21 @@ jobs:
           # common and adaptor only had obj-m inside that block, so add obj-y.
           force_builtin('common/Makefile', False)
           force_builtin('wlan/adaptor/Makefile', False)
-          # gen4m already adds obj-$(CONFIG_MTK_COMBO_WIFI) just above, so
-          # only remove the module branch.
           force_builtin('wlan/core/gen4m/Makefile', True)
+
+          # gen4m's Kconfig-keyed line sits in an ifeq that is true when
+          # CONFIG_MTK_WIFI_ONLY is empty, which silently builds nothing in
+          # this kernel. Force the real driver object unconditionally.
+          gen4m_path = base / 'wlan/core/gen4m/Makefile'
+          t = gen4m_path.read_text()
+          t, n = re.subn(
+              r'ifeq \(\$\(CONFIG_MTK_WIFI_ONLY\),.*?\nendif\n',
+              'obj-y += $(MODULE_NAME).o\n', t, count=1, flags=re.S)
+          if n != 1:
+              raise SystemExit('gen4m WIFI_ONLY block not found')
+          gen4m_path.write_text(t)
+          if 'CONFIG_MTK_WIFI_ONLY' in gen4m_path.read_text():
+              raise SystemExit('gen4m WIFI_ONLY block still present')
 
           # ---------------------------------------------------------------
           # Sanity checks on the final Makefiles.
@@ -186,7 +198,7 @@ jobs:
               raise SystemExit('wmt_drv is not built in')
           if 'obj-y += $(MODULE_NAME).o' not in adaptor:
               raise SystemExit('wmt_chrdev_wifi is not built in')
-          if 'obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o' not in gen4m:
+          if 'obj-y += $(MODULE_NAME).o' not in gen4m:
               raise SystemExit('wlan_6765_axi is not built in')
           for name, text in (('common', common), ('adaptor', adaptor),
                              ('gen4m', gen4m)):
@@ -202,7 +214,7 @@ jobs:
           grep -n 'obj-y += $(MODULE_NAME).o' \
             drivers/misc/mediatek/connectivity/common/Makefile \
             drivers/misc/mediatek/connectivity/wlan/adaptor/Makefile
-          grep -n 'obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o' \
+          grep -n 'obj-y += $(MODULE_NAME).o' \
             drivers/misc/mediatek/connectivity/wlan/core/gen4m/Makefile
 
           # Kernel config: the WiFi stack must be selected as built-in.
