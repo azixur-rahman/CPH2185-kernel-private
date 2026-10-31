@@ -1,4 +1,4 @@
-name: Build Falcon-AZ CPH2185 CPH2179 Built-in WiFi KSU
+name: Build Falcon-AZ CPH2185 CPH2179 Built-in WiFi BT KSU
 
 on:
   workflow_dispatch:
@@ -127,9 +127,8 @@ jobs:
               raise SystemExit('kal_pdma volatile descriptor patch failed')
 
           # ---------------------------------------------------------------
-          # Top-level connectivity Makefile: build only the WiFi stack into
-          # the kernel. BT/GPS/FM stay out of this kernel, exactly like the
-          # previous working build.
+          # Top-level connectivity Makefile: build WiFi and Bluetooth into
+          # the kernel. GPS/FM stay out of this kernel.
           # ---------------------------------------------------------------
           p = base / 'Makefile'
           s = p.read_text()
@@ -140,13 +139,16 @@ jobs:
           s = re.sub(r'(?<!\S)-Werror(?!\S)', '', s)
 
           for entry in (
-              'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/',
               'obj-$(CONFIG_MTK_COMBO_GPS) += gps/',
               'obj-$(CONFIG_MTK_FMRADIO) += fmradio/',
           ):
               if entry not in s:
                   raise SystemExit('missing non-WiFi entry: ' + entry)
               s = s.replace(entry, '# ' + entry)
+
+          bt_entry = 'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/'
+          if bt_entry not in s:
+              raise SystemExit('missing Bluetooth entry: ' + bt_entry)
 
           for entry in (
               'obj-$(CONFIG_MTK_COMBO) += common/',
@@ -170,6 +172,28 @@ jobs:
           if '-Werror' in s:
               raise SystemExit('top-level -Werror still present')
           p.write_text(s)
+
+          # ---------------------------------------------------------------
+          # Bluetooth: A15_Q ships only an Android.mk for the legacy char
+          # driver, so add a kbuild Makefile and force the driver to obj-y.
+          # MTK_WCN_REMOVE_KERNEL_MODULE is set by the top-level Makefile,
+          # so stp_chrdev_bt.c exports mtk_wcn_stpbt_drv_init() and WMT
+          # calls it while bringing up the connectivity subsystem.
+          # ---------------------------------------------------------------
+          bt_top = base / 'bt/mt66xx/Makefile'
+          bt_top.write_text('obj-$(CONFIG_MTK_COMBO_BT) += legacy/\n')
+
+          bt_legacy = base / 'bt/mt66xx/legacy/Makefile'
+          t = bt_legacy.read_text()
+          t = t.replace(
+              'WMT_SRC_FOLDER := $(TOP)/vendor/mediatek/kernel_modules/connectivity/common',
+              'WMT_SRC_FOLDER := $(srctree)/drivers/misc/mediatek/connectivity/common')
+          t = t.replace('obj-m += $(MODULE_NAME).o',
+                        'obj-y += $(MODULE_NAME).o')
+          t = t.replace('$(MODULE_NAME)-objs +=',
+                        '$(MODULE_NAME)-y +=')
+          t = re.sub(r'(?<!\S)-Werror(?!\S)', '', t)
+          bt_legacy.write_text(t)
 
           # ---------------------------------------------------------------
           # Child Makefiles: force all three WiFi pieces to obj-y. The
@@ -222,16 +246,27 @@ jobs:
               'obj-$(CONFIG_MTK_COMBO) += common/',
               'obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/adaptor/',
               'obj-$(CONFIG_MTK_COMBO_CHIP_CONSYS_6765) += wlan/core/gen4m/',
+              'obj-$(CONFIG_MTK_COMBO_BT) += bt/mt66xx/',
           ):
               if entry not in top:
-                  raise SystemExit('WiFi build entry lost: ' + entry)
+                  raise SystemExit('built-in entry lost: ' + entry)
           for entry, label in (
-              (r'^\s*obj-\$\(CONFIG_MTK_COMBO_BT\)', 'BT'),
               (r'^\s*obj-\$\(CONFIG_MTK_COMBO_GPS\)', 'GPS'),
               (r'^\s*obj-\$\(CONFIG_MTK_FMRADIO\)', 'FM'),
           ):
               if re.search(entry, top, re.M):
                   raise SystemExit(label + ' build entry still active')
+
+          bt_top_text = (base / 'bt/mt66xx/Makefile').read_text()
+          bt_legacy_text = (base / 'bt/mt66xx/legacy/Makefile').read_text()
+          if 'legacy/' not in bt_top_text:
+              raise SystemExit('BT legacy entry missing')
+          if 'obj-y += $(MODULE_NAME).o' not in bt_legacy_text:
+              raise SystemExit('bt_drv is not built in')
+          if 'obj-m' in bt_legacy_text:
+              raise SystemExit('bt_drv still has obj-m')
+          if '$(TOP)/vendor' in bt_legacy_text:
+              raise SystemExit('bt_drv still uses vendor path')
 
           common = (base / 'common/Makefile').read_text()
           adaptor = (base / 'wlan/adaptor/Makefile').read_text()
@@ -251,17 +286,20 @@ jobs:
           PY
 
           echo '== built-in Makefile checks passed =='
-          grep -nE 'obj-\$\(CONFIG_MTK_COMBO(_WIFI|_CHIP_CONSYS_6765)?\)' \
+          grep -nE 'obj-\$\(CONFIG_MTK_COMBO(_WIFI|_BT|_CHIP_CONSYS_6765)?\)' \
             drivers/misc/mediatek/connectivity/Makefile
           grep -n 'obj-y += $(MODULE_NAME).o' \
             drivers/misc/mediatek/connectivity/common/Makefile \
             drivers/misc/mediatek/connectivity/wlan/adaptor/Makefile
           grep -n 'obj-y += $(MODULE_NAME).o' \
             drivers/misc/mediatek/connectivity/wlan/core/gen4m/Makefile
+          grep -n 'obj-y += $(MODULE_NAME).o' \
+            drivers/misc/mediatek/connectivity/bt/mt66xx/legacy/Makefile
 
-          # Kernel config: the WiFi stack must be selected as built-in.
+          # Kernel config: the WiFi and Bluetooth stacks must be built-in.
           grep -q '^CONFIG_MTK_COMBO=y' arch/arm64/configs/CPH2185_defconfig
           grep -q '^CONFIG_MTK_COMBO_WIFI=y' arch/arm64/configs/CPH2185_defconfig
+          grep -q '^CONFIG_MTK_COMBO_BT=y' arch/arm64/configs/CPH2185_defconfig
           grep -q '^CONFIG_MTK_COMBO_CHIP_CONSYS_6765=y' arch/arm64/configs/CPH2185_defconfig
           grep -q '^CONFIG_MTK_COMBO_CHIP="CONSYS_6765"' arch/arm64/configs/CPH2185_defconfig
           if grep -q '^CONFIG_MTK_WIFI_ONLY=y' arch/arm64/configs/CPH2185_defconfig; then
@@ -358,7 +396,9 @@ jobs:
           grep -q '^CONFIG_MODULE_FORCE_UNLOAD=y' ../Falcon-AZ-config
           grep -q '^CONFIG_MTK_COMBO=y' ../Falcon-AZ-config
           grep -q '^CONFIG_MTK_COMBO_WIFI=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MTK_COMBO_BT=y' ../Falcon-AZ-config
           grep -q '^CONFIG_MTK_COMBO_CHIP_CONSYS_6765=y' ../Falcon-AZ-config
+          grep -q '^CONFIG_MTK_CONNSYS_DEDICATED_LOG_PATH=y' ../Falcon-AZ-config
 
           echo '== kernel release checks =='
           test "$(cat out/include/config/kernel.release)" = "4.9.190+"
@@ -381,6 +421,12 @@ jobs:
           test -s out/drivers/misc/mediatek/connectivity/wlan/adaptor/built-in.o
           test -s out/drivers/misc/mediatek/connectivity/wlan/core/gen4m/built-in.o
 
+          echo '== built-in Bluetooth object checks =='
+          test -s out/drivers/misc/mediatek/connectivity/bt/mt66xx/legacy/stp_chrdev_bt.o
+          test -s out/drivers/misc/mediatek/connectivity/bt/mt66xx/legacy/fw_log_bt.o
+          test -s out/drivers/misc/mediatek/connectivity/bt/mt66xx/legacy/bt_drv.o
+          test -s out/drivers/misc/mediatek/connectivity/bt/mt66xx/legacy/built-in.o
+
           echo '== built-in WiFi symbol checks =='
           grep -q ' wmt_export_platform_bridge_register$' ../Falcon-AZ-System.map
           grep -q ' mtk_wcn_wmt_wifi_init$' ../Falcon-AZ-System.map
@@ -389,10 +435,14 @@ jobs:
           grep -q ' wmt_detect_driver_init$' ../Falcon-AZ-System.map
           grep -q ' mtk_wcn_common_drv_init$' ../Falcon-AZ-System.map
 
-          echo '== no WiFi module files =='
+          echo '== built-in Bluetooth symbol checks =='
+          grep -q ' T mtk_wcn_stpbt_drv_init$' ../Falcon-AZ-System.map
+          grep -q ' T fw_log_bt_init$' ../Falcon-AZ-System.map
+
+          echo '== no connectivity module files =='
           test -z "$(find out/drivers/misc/mediatek/connectivity -name '*.ko' -print -quit)"
 
-          echo '== built-in WiFi verification passed =='
+          echo '== built-in WiFi and Bluetooth verification passed =='
 
       - name: Package AnyKernel
         run: |
