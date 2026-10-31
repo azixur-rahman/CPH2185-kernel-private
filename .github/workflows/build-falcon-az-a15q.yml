@@ -364,6 +364,15 @@ jobs:
           grep -q '4.9.190-falcon-az' init/version.c
           grep -nE 'CONFIG_LOCALVERSION|CONFIG_LOCALVERSION_AUTO' arch/arm64/configs/CPH2185_defconfig
 
+      - name: Package working source
+        working-directory: src
+        run: |
+          set -eu
+          tar --exclude='./out' --exclude='./.git' \
+            -czf "../Falcon-AZ-source-${GITHUB_SHA::12}.tar.gz" .
+          ls -lh "../Falcon-AZ-source-${GITHUB_SHA::12}.tar.gz"
+          sha256sum "../Falcon-AZ-source-${GITHUB_SHA::12}.tar.gz"
+
       - name: Build kernel and DTBs
         working-directory: src
         env:
@@ -473,6 +482,14 @@ jobs:
             Falcon-AZ-System.map
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload working source
+        uses: actions/upload-artifact@v4
+        with:
+          name: Falcon-AZ-source-${{ github.sha }}
+          path: Falcon-AZ-source-*.tar.gz
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Upload debug kernel files
         if: always()
